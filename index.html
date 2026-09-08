@@ -73,11 +73,25 @@
 
   .controls{
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     justify-content: space-between;
     gap: 10px;
     padding: 10px 0 0;
     flex-wrap: wrap;
+  }
+
+  .length-col{
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 5px;
+  }
+
+  .length-caption{
+    font-size: 0.68rem;
+    color: var(--ink-soft);
+    font-style: italic;
+    font-family: 'Fraunces', serif;
   }
 
   .length-group{
@@ -100,7 +114,7 @@
   .length-group button:last-child{ border-right: none; }
   .length-group button.active{ background: var(--ink); color: var(--paper); }
 
-  .text-links{ display: flex; gap: 14px; }
+  .text-links{ display: flex; gap: 14px; padding-top: 5px; }
 
   .text-links button{
     background: none;
@@ -271,12 +285,15 @@
 <div class="page">
   <header class="masthead">
     <h1>WRDL</h1>
-    <div class="tagline">a private little word puzzle</div>
+    <div class="tagline">frstrtng wrd pzzl</div>
   </header>
   <hr class="rule">
 
   <div class="controls">
-    <div class="length-group" id="lengthGroup"></div>
+    <div class="length-col">
+      <div class="length-group" id="lengthGroup"></div>
+      <div class="length-caption">Word length</div>
+    </div>
     <div class="text-links">
       <button id="statsBtn">stats</button>
       <button id="newWordBtn">new word</button>
@@ -284,7 +301,6 @@
   </div>
 
   <div class="meta-row">
-    <span>Games played: <span id="playedCount">0</span></span>
     <span>Current streak: <span id="streakCount">0</span></span>
   </div>
   <hr class="rule thin">
@@ -342,7 +358,6 @@
   const resultTitle = document.getElementById('resultTitle');
   const resultBody = document.getElementById('resultBody');
   const lengthGroupEl = document.getElementById('lengthGroup');
-  const playedCountEl = document.getElementById('playedCount');
   const streakCountEl = document.getElementById('streakCount');
 
   const statsOverlay = document.getElementById('statsOverlay');
@@ -376,7 +391,6 @@
   }
 
   function renderStatsQuick(){
-    playedCountEl.textContent = stats.played;
     streakCountEl.textContent = stats.currentStreak;
   }
 
