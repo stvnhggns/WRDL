@@ -188,7 +188,7 @@
   .tile.present{ background: var(--present); border-color: var(--present); color: var(--correct-ink); }
   .tile.absent{ background: var(--absent); border-color: var(--absent); color: var(--correct-ink); }
 
-  .board-row.shake{ animation: shake 0.4s ease; }
+  .board-row.shake{ animation: shake 1s ease; }
   @keyframes shake{
     10%, 90% { transform: translateX(-1px); }
     20%, 80% { transform: translateX(2px); }
@@ -230,6 +230,15 @@
     padding: 20px; z-index: 10;
   }
   .overlay.show{ display: flex; }
+
+  #confettiCanvas{
+    position: fixed;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: 30;
+  }
 
   .modal{
     background: var(--paper);
@@ -325,10 +334,6 @@
   }
   .modal button.ghost:hover{ background: var(--pencil); color: var(--paper); }
 
-  @media (prefers-reduced-motion: reduce){
-    .tile.flip, .board-row.shake, .tile.filled { animation: none; }
-  }
-
   @media (max-width: 340px){
     .tile{ font-size: 1.1rem; }
     .key{ height: 44px; font-size: 0.75rem; }
@@ -366,6 +371,8 @@
 
   <div class="keyboard" id="keyboard"></div>
 </div>
+
+<canvas id="confettiCanvas"></canvas>
 
 <div class="overlay" id="overlay">
   <div class="modal">
@@ -612,7 +619,7 @@
   function shakeRow(){
     const {row} = rowsEls[currentRow];
     row.classList.add('shake');
-    setTimeout(() => row.classList.remove('shake'), 400);
+    setTimeout(() => row.classList.remove('shake'), 1000);
   }
 
   function submitGuess(){
@@ -702,6 +709,7 @@
       ? `Solved in ${currentRow + 1} of ${MAX_GUESSES}. Current streak: ${stats.currentStreak}.`
       : `The word was <span class="answer-word">${answer.toUpperCase()}</span>.`;
     overlay.classList.add('show');
+    if(won) launchConfetti(2000);
   }
 
   function resetGame(){
@@ -754,6 +762,65 @@
     else if(key === 'backspace') handleKey('back');
     else if(/^[a-z]$/.test(key)) handleKey(key);
   });
+
+  // Confetti burst on a win — small canvas particle system, no external libs
+  const confettiCanvas = document.getElementById('confettiCanvas');
+  const confettiCtx = confettiCanvas.getContext('2d');
+  const CONFETTI_COLORS = ['#3F6C51', '#C9A227', '#B23A2E', '#23222A'];
+  let confettiParticles = [];
+  let confettiAnimId = null;
+  let confettiEndTime = 0;
+
+  function resizeConfettiCanvas(){
+    confettiCanvas.width = window.innerWidth;
+    confettiCanvas.height = window.innerHeight;
+  }
+  window.addEventListener('resize', resizeConfettiCanvas);
+  resizeConfettiCanvas();
+
+  function launchConfetti(durationMs){
+    resizeConfettiCanvas();
+    const count = 140;
+    confettiParticles = Array.from({length: count}, () => ({
+      x: Math.random() * confettiCanvas.width,
+      y: -20 - Math.random() * confettiCanvas.height * 0.4,
+      w: 6 + Math.random() * 5,
+      h: 4 + Math.random() * 4,
+      color: CONFETTI_COLORS[Math.floor(Math.random() * CONFETTI_COLORS.length)],
+      speedY: 2.5 + Math.random() * 3.5,
+      speedX: (Math.random() - 0.5) * 2.5,
+      rotation: Math.random() * 360,
+      rotationSpeed: (Math.random() - 0.5) * 12,
+    }));
+    confettiEndTime = performance.now() + durationMs;
+    if(confettiAnimId) cancelAnimationFrame(confettiAnimId);
+    animateConfetti();
+  }
+
+  function animateConfetti(){
+    confettiCtx.clearRect(0, 0, confettiCanvas.width, confettiCanvas.height);
+
+    if(performance.now() >= confettiEndTime){
+      confettiParticles = [];
+      confettiAnimId = null;
+      return;
+    }
+
+    confettiParticles.forEach(p => {
+      p.x += p.speedX;
+      p.y += p.speedY;
+      p.rotation += p.rotationSpeed;
+
+      confettiCtx.save();
+      confettiCtx.translate(p.x, p.y);
+      confettiCtx.rotate(p.rotation * Math.PI / 180);
+      confettiCtx.fillStyle = p.color;
+      confettiCtx.fillRect(-p.w / 2, -p.h / 2, p.w, p.h);
+      confettiCtx.restore();
+    });
+
+    confettiAnimId = requestAnimationFrame(animateConfetti);
+  }
 
   // Keep the screen awake while the game is open (supported browsers only; silently does nothing otherwise)
   let wakeLock = null;
