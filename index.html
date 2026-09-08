@@ -256,6 +256,61 @@
 
   .modal-buttons{ display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
 
+  .dist-caption{
+    font-size: 0.68rem;
+    color: var(--ink-soft);
+    font-style: italic;
+    font-family: 'Fraunces', serif;
+    text-align: left;
+    margin-bottom: 8px;
+  }
+
+  .guess-dist{
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    margin-bottom: 20px;
+  }
+
+  .dist-row{
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .dist-try{
+    font-family: 'Fraunces', serif;
+    font-weight: 600;
+    font-size: 0.8rem;
+    width: 12px;
+    text-align: right;
+    flex-shrink: 0;
+  }
+
+  .dist-bar-track{
+    flex: 1;
+    background: var(--paper-dim);
+    border: 1px solid var(--rule);
+    height: 18px;
+    position: relative;
+  }
+
+  .dist-bar-fill{
+    background: var(--correct);
+    height: 100%;
+    min-width: 2px;
+    transition: width 0.3s ease;
+  }
+
+  .dist-count{
+    font-size: 0.72rem;
+    color: var(--ink-soft);
+    width: 20px;
+    text-align: left;
+    flex-shrink: 0;
+    font-variant-numeric: tabular-nums;
+  }
+
   .modal button.primary{
     font-family: 'Inter', sans-serif; font-weight: 600; font-size: 0.85rem;
     background: var(--ink); color: var(--paper);
@@ -331,6 +386,10 @@
       <div class="stat-cell"><div class="stat-num" id="statStreak">0</div><div class="stat-label">Current streak</div></div>
       <div class="stat-cell"><div class="stat-num" id="statMaxStreak">0</div><div class="stat-label">Longest streak</div></div>
     </div>
+
+    <div class="dist-caption">Guesses per win</div>
+    <div class="guess-dist" id="guessDist"></div>
+
     <div class="modal-buttons">
       <button class="primary" id="statsCloseBtn">Close</button>
       <button class="ghost" id="statsResetBtn">Reset stats</button>
@@ -366,6 +425,7 @@
   const statStreak = document.getElementById('statStreak');
   const statMaxStreak = document.getElementById('statMaxStreak');
   const statsResetBtn = document.getElementById('statsResetBtn');
+  const guessDistEl = document.getElementById('guessDist');
 
   let wordLength = parseInt(localStorage.getItem(LENGTH_KEY), 10);
   if(!LENGTHS.includes(wordLength)) wordLength = 5;
@@ -379,9 +439,15 @@
   function loadStats(){
     try{
       const raw = localStorage.getItem(STATS_KEY);
-      if(raw) return JSON.parse(raw);
+      if(raw){
+        const parsed = JSON.parse(raw);
+        if(!Array.isArray(parsed.distribution) || parsed.distribution.length !== MAX_GUESSES){
+          parsed.distribution = new Array(MAX_GUESSES).fill(0);
+        }
+        return parsed;
+      }
     }catch(e){}
-    return { played: 0, won: 0, currentStreak: 0, maxStreak: 0 };
+    return { played: 0, won: 0, currentStreak: 0, maxStreak: 0, distribution: new Array(MAX_GUESSES).fill(0) };
   }
   let stats = loadStats();
 
@@ -399,14 +465,45 @@
     statWinPct.textContent = stats.played ? Math.round((stats.won / stats.played) * 100) : 0;
     statStreak.textContent = stats.currentStreak;
     statMaxStreak.textContent = stats.maxStreak;
+    renderGuessDist();
   }
 
-  function recordGameEnd(won){
+  function renderGuessDist(){
+    guessDistEl.innerHTML = "";
+    const maxCount = Math.max(1, ...stats.distribution);
+    stats.distribution.forEach((count, i) => {
+      const row = document.createElement('div');
+      row.className = 'dist-row';
+
+      const label = document.createElement('div');
+      label.className = 'dist-try';
+      label.textContent = i + 1;
+
+      const track = document.createElement('div');
+      track.className = 'dist-bar-track';
+      const fill = document.createElement('div');
+      fill.className = 'dist-bar-fill';
+      fill.style.width = `${(count / maxCount) * 100}%`;
+      track.appendChild(fill);
+
+      const countEl = document.createElement('div');
+      countEl.className = 'dist-count';
+      countEl.textContent = count;
+
+      row.appendChild(label);
+      row.appendChild(track);
+      row.appendChild(countEl);
+      guessDistEl.appendChild(row);
+    });
+  }
+
+  function recordGameEnd(won, triesUsed){
     stats.played += 1;
     if(won){
       stats.won += 1;
       stats.currentStreak += 1;
       stats.maxStreak = Math.max(stats.maxStreak, stats.currentStreak);
+      stats.distribution[triesUsed - 1] += 1;
     } else {
       stats.currentStreak = 0;
     }
@@ -599,7 +696,7 @@
   }
 
   function showResult(won){
-    recordGameEnd(won);
+    recordGameEnd(won, currentRow + 1);
     resultTitle.textContent = won ? "Got it." : "So it goes.";
     resultBody.innerHTML = won
       ? `Solved in ${currentRow + 1} of ${MAX_GUESSES}. Current streak: ${stats.currentStreak}.`
@@ -643,7 +740,7 @@
     } else {
       clearTimeout(resetArmTimer);
       resetArmed = false;
-      stats = { played: 0, won: 0, currentStreak: 0, maxStreak: 0 };
+      stats = { played: 0, won: 0, currentStreak: 0, maxStreak: 0, distribution: new Array(MAX_GUESSES).fill(0) };
       saveStats();
       renderStatsModal();
       statsResetBtn.textContent = "Reset stats";
