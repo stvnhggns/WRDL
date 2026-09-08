@@ -658,12 +658,28 @@
     else if(/^[a-z]$/.test(key)) handleKey(key);
   });
 
+  // Keep the screen awake while the game is open (supported browsers only; silently does nothing otherwise)
+  let wakeLock = null;
+  async function requestWakeLock(){
+    try{
+      if('wakeLock' in navigator){
+        wakeLock = await navigator.wakeLock.request('screen');
+      }
+    }catch(e){
+      // unsupported, denied, or battery saver active — fail silently
+    }
+  }
+  document.addEventListener('visibilitychange', () => {
+    if(document.visibilityState === 'visible') requestWakeLock();
+  });
+
   // init
   buildLengthGroup();
   renderStatsQuick();
   answer = pickAnswer();
   buildBoard();
   buildKeyboard();
+  requestWakeLock();
 })();
 </script>
 
