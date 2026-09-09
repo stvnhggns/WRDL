@@ -442,6 +442,9 @@
   let currentGuess = "";
   let gameOver = false;
   let rowsEls = [];
+  let guessHistory = [];
+  let resultHistory = [];
+  const GAME_KEY = 'wrdl_game_v1';
 
   function loadStats(){
     try{
@@ -522,6 +525,58 @@
     return pool[Math.floor(Math.random() * pool.length)];
   }
 
+  function saveGame(){
+    const state = {
+      wordLength,
+      answer,
+      guesses: guessHistory.map((g, i) => ({ guess: g, result: resultHistory[i] })),
+      currentGuess,
+      gameOver
+    };
+    try{ localStorage.setItem(GAME_KEY, JSON.stringify(state)); }catch(e){}
+  }
+
+  function loadGame(){
+    try{
+      const raw = localStorage.getItem(GAME_KEY);
+      if(raw){
+        const parsed = JSON.parse(raw);
+        if(LENGTHS.includes(parsed.wordLength) && typeof parsed.answer === 'string' && Array.isArray(parsed.guesses)){
+          return parsed;
+        }
+      }
+    }catch(e){}
+    return null;
+  }
+
+  function restoreGame(saved){
+    wordLength = saved.wordLength;
+    answer = saved.answer;
+    guessHistory = saved.guesses.map(g => g.guess);
+    resultHistory = saved.guesses.map(g => g.result);
+    currentGuess = saved.currentGuess || "";
+    gameOver = !!saved.gameOver;
+
+    Object.keys(keyStates).forEach(k => delete keyStates[k]);
+    buildBoard();
+    buildKeyboard();
+
+    guessHistory.forEach((guess, i) => {
+      const {tiles} = rowsEls[i];
+      const result = resultHistory[i];
+      guess.split('').forEach((letter, j) => {
+        tiles[j].textContent = letter;
+        tiles[j].classList.add('filled', result[j]);
+        updateKeyState(letter, result[j]);
+      });
+    });
+
+    currentRow = guessHistory.length;
+    if(!gameOver){
+      renderCurrentRow();
+    }
+  }
+
   function buildLengthGroup(){
     lengthGroupEl.innerHTML = "";
     LENGTHS.forEach(L => {
@@ -595,6 +650,7 @@
     if(k === 'back'){
       currentGuess = currentGuess.slice(0, -1);
       renderCurrentRow();
+      saveGame();
       return;
     }
     if(k === 'enter'){
@@ -604,6 +660,7 @@
     if(/^[a-z]$/.test(k) && currentGuess.length < wordLength){
       currentGuess += k;
       renderCurrentRow();
+      saveGame();
     }
   }
 
@@ -636,19 +693,26 @@
 
     const guess = currentGuess;
     const result = scoreGuess(guess, answer);
+    guessHistory.push(guess);
+    resultHistory.push(result);
     revealRow(result, guess);
+    currentGuess = "";
 
     if(guess === answer){
       gameOver = true;
+      saveGame();
       setTimeout(() => showResult(true), 1500);
       return;
     }
 
     currentRow++;
-    currentGuess = "";
 
     if(currentRow >= MAX_GUESSES){
       gameOver = true;
+    }
+    saveGame();
+
+    if(gameOver){
       setTimeout(() => showResult(false), 1500);
     }
   }
@@ -709,7 +773,7 @@
       ? `Solved in ${currentRow + 1} of ${MAX_GUESSES}. Current streak: ${stats.currentStreak}.`
       : `The word was <span class="answer-word">${answer.toUpperCase()}</span>.`;
     overlay.classList.add('show');
-    if(won) launchConfetti(2000);
+    launchConfetti(6000, won ? CONFETTI_COLORS_WIN : CONFETTI_COLORS_LOSS);
   }
 
   function resetGame(){
@@ -717,11 +781,14 @@
     currentRow = 0;
     currentGuess = "";
     gameOver = false;
+    guessHistory = [];
+    resultHistory = [];
     Object.keys(keyStates).forEach(k => delete keyStates[k]);
     buildBoard();
     buildKeyboard();
     overlay.classList.remove('show');
     setMessage("");
+    saveGame();
   }
 
   document.getElementById('playAgainBtn').addEventListener('click', resetGame);
@@ -763,12 +830,14 @@
     else if(/^[a-z]$/.test(key)) handleKey(key);
   });
 
-  // Confetti burst on a win — small canvas particle system, no external libs
+  // Confetti burst on game end — small canvas particle system, no external libs
   const confettiCanvas = document.getElementById('confettiCanvas');
   const confettiCtx = confettiCanvas.getContext('2d');
-  const CONFETTI_COLORS = ['#3F6C51', '#C9A227', '#B23A2E', '#23222A'];
+  const CONFETTI_COLORS_WIN = ['#3F6C51', '#C9A227', '#B23A2E', '#23222A'];
+  const CONFETTI_COLORS_LOSS = ['#000000'];
   let confettiParticles = [];
   let confettiAnimId = null;
+  let confettiStartTime = 0;
   let confettiEndTime = 0;
 
   function resizeConfettiCanvas(){
@@ -778,21 +847,23 @@
   window.addEventListener('resize', resizeConfettiCanvas);
   resizeConfettiCanvas();
 
-  function launchConfetti(durationMs){
+  function launchConfetti(durationMs, colors){
     resizeConfettiCanvas();
-    const count = 140;
+    const count = 220;
     confettiParticles = Array.from({length: count}, () => ({
       x: Math.random() * confettiCanvas.width,
-      y: -20 - Math.random() * confettiCanvas.height * 0.4,
+      y: -20,
+      startDelay: Math.random() * durationMs * 0.6,
       w: 6 + Math.random() * 5,
       h: 4 + Math.random() * 4,
-      color: CONFETTI_COLORS[Math.floor(Math.random() * CONFETTI_COLORS.length)],
-      speedY: 2.5 + Math.random() * 3.5,
+      color: colors[Math.floor(Math.random() * colors.length)],
+      speedY: 2 + Math.random() * 3,
       speedX: (Math.random() - 0.5) * 2.5,
       rotation: Math.random() * 360,
       rotationSpeed: (Math.random() - 0.5) * 12,
     }));
-    confettiEndTime = performance.now() + durationMs;
+    confettiStartTime = performance.now();
+    confettiEndTime = confettiStartTime + durationMs;
     if(confettiAnimId) cancelAnimationFrame(confettiAnimId);
     animateConfetti();
   }
@@ -800,13 +871,16 @@
   function animateConfetti(){
     confettiCtx.clearRect(0, 0, confettiCanvas.width, confettiCanvas.height);
 
-    if(performance.now() >= confettiEndTime){
+    const now = performance.now();
+    if(now >= confettiEndTime){
       confettiParticles = [];
       confettiAnimId = null;
       return;
     }
+    const elapsed = now - confettiStartTime;
 
     confettiParticles.forEach(p => {
+      if(elapsed < p.startDelay) return;
       p.x += p.speedX;
       p.y += p.speedY;
       p.rotation += p.rotationSpeed;
@@ -838,11 +912,17 @@
   });
 
   // init
+  const savedGame = loadGame();
+  if(savedGame){
+    restoreGame(savedGame);
+  } else {
+    answer = pickAnswer();
+    buildBoard();
+    buildKeyboard();
+  }
   buildLengthGroup();
   renderStatsQuick();
-  answer = pickAnswer();
-  buildBoard();
-  buildKeyboard();
+  saveGame();
   requestWakeLock();
 })();
 </script>
