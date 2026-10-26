@@ -334,6 +334,80 @@
   }
   .modal button.ghost:hover{ background: var(--pencil); color: var(--paper); }
 
+  /* Hidden edit mode (tap the title 5 times) */
+  #title{
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+    cursor: default;
+  }
+
+  .edit-bar{
+    display: none;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+    margin-top: 10px;
+    padding: 6px 10px;
+    border: 1px dashed var(--pencil);
+    color: var(--pencil);
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+  }
+  body.edit-mode .edit-bar{ display: flex; }
+  .edit-bar-links{ display: flex; gap: 12px; }
+  .edit-bar button{
+    background: none; border: none; font: inherit; color: var(--pencil);
+    text-decoration: underline; text-underline-offset: 2px; cursor: pointer; padding: 0;
+  }
+
+  .board-row{ position: relative; }
+  .mark-btn{
+    display: none;
+    position: absolute;
+    left: 100%;
+    top: 50%;
+    transform: translateY(-50%);
+    margin-left: 8px;
+    background: none; border: none; padding: 0;
+    font: inherit; font-size: 0.68rem; color: var(--pencil);
+    text-decoration: underline; text-underline-offset: 2px;
+    cursor: pointer; white-space: nowrap;
+  }
+  .mark-btn.on{ font-weight: 700; text-decoration: none; }
+  body.edit-mode .mark-btn{ display: block; }
+  body.edit-mode .board{ padding-right: 52px; }
+
+  .mark-inline{
+    display: none;
+    background: none; border: none; font: inherit; font-size: 0.8rem;
+    color: var(--pencil); text-decoration: underline; text-underline-offset: 2px;
+    cursor: pointer; padding: 0; margin: -8px auto 18px;
+  }
+  .mark-inline.on{ font-weight: 700; text-decoration: none; }
+
+  .review-list{
+    max-height: 40vh; overflow-y: auto; text-align: left;
+    margin: 4px 0 16px; border-top: 1px solid var(--rule);
+  }
+  .review-row{
+    display: flex; align-items: center; gap: 10px;
+    padding: 7px 2px; border-bottom: 1px solid var(--rule);
+  }
+  .review-word{
+    font-family: 'Fraunces', serif; font-weight: 600; text-transform: uppercase;
+    letter-spacing: 0.05em; flex: 1;
+  }
+  .review-role{ font-size: 0.68rem; color: var(--ink-soft); font-style: italic; }
+  .review-x{
+    background: none; border: none; font: inherit; font-size: 0.72rem; color: var(--pencil);
+    text-decoration: underline; cursor: pointer; padding: 0;
+  }
+  .review-empty{ padding: 14px 2px; font-size: 0.85rem; color: var(--ink-soft); }
+  .modal-buttons + .modal-buttons{ margin-top: 10px; }
+
   @media (max-width: 340px){
     .tile{ font-size: 1.1rem; }
     .key{ height: 44px; font-size: 0.75rem; }
@@ -344,7 +418,7 @@
 
 <div class="page">
   <header class="masthead">
-    <h1>WRDL</h1>
+    <h1 id="title">WRDL</h1>
     <div class="tagline">frstrtng wrd pzzl</div>
   </header>
   <hr class="rule">
@@ -365,6 +439,14 @@
   </div>
   <hr class="rule thin">
 
+  <div class="edit-bar" id="editBar">
+    <span>Edit mode &middot; <span id="markedCount">0</span> marked</span>
+    <span class="edit-bar-links">
+      <button id="reviewBtn">review list</button>
+      <button id="exitEditBtn">exit</button>
+    </span>
+  </div>
+
   <div class="message" id="message"></div>
 
   <div class="board" id="board"></div>
@@ -378,8 +460,24 @@
   <div class="modal">
     <h2 id="resultTitle">Got it.</h2>
     <p id="resultBody">The word was <span class="answer-word" id="resultWord"></span>.</p>
+    <button class="mark-inline" id="resultMarkBtn" type="button"></button>
     <div class="modal-buttons">
       <button class="primary" id="playAgainBtn">Play again</button>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="reviewOverlay">
+  <div class="modal">
+    <h2>Marked words</h2>
+    <div class="review-list" id="reviewList"></div>
+    <div class="modal-buttons">
+      <button class="primary" id="copyListBtn">Copy list</button>
+      <button class="primary" id="downloadListBtn">Download</button>
+    </div>
+    <div class="modal-buttons">
+      <button class="ghost" id="clearListBtn">Clear list</button>
+      <button class="ghost" id="reviewCloseBtn">Close</button>
     </div>
   </div>
 </div>
@@ -520,8 +618,229 @@
     saveStats();
   }
 
+  // ---- Edit mode: mark words for removal from the dictionary ----
+  const FLAG_KEY = 'wrdl_flagged_v1';
+  const EDIT_KEY = 'wrdl_edit_v1';
+  const markedCountEl = document.getElementById('markedCount');
+  const resultMarkBtn = document.getElementById('resultMarkBtn');
+  const reviewOverlay = document.getElementById('reviewOverlay');
+  const reviewListEl = document.getElementById('reviewList');
+  const copyListBtn = document.getElementById('copyListBtn');
+  const clearListBtn = document.getElementById('clearListBtn');
+
+  // Each entry: { word, role }. role 'answer' = it was the solution; 'guess' = typed as a guess.
+  let flagged = loadFlagged();
+  let excludedAnswers = new Set();   // never picked as a solution on this device
+  let rejectedGuesses = new Set();   // also refused as a guess on this device
+  let editMode = false;
+  try{ editMode = localStorage.getItem(EDIT_KEY) === '1'; }catch(e){}
+  rebuildFlagSets();
+
+  function loadFlagged(){
+    try{
+      const raw = localStorage.getItem(FLAG_KEY);
+      if(raw){
+        const parsed = JSON.parse(raw);
+        if(Array.isArray(parsed)){
+          return parsed.filter(f => f && typeof f.word === 'string' && (f.role === 'answer' || f.role === 'guess'));
+        }
+      }
+    }catch(e){}
+    return [];
+  }
+
+  function rebuildFlagSets(){
+    excludedAnswers = new Set(flagged.map(f => f.word));
+    rejectedGuesses = new Set(flagged.filter(f => f.role === 'guess').map(f => f.word));
+  }
+
+  function saveFlagged(){
+    try{ localStorage.setItem(FLAG_KEY, JSON.stringify(flagged)); }catch(e){}
+    rebuildFlagSets();
+    renderEditBar();
+  }
+
+  function isMarked(word){ return flagged.some(f => f.word === word); }
+
+  function roleFor(word){ return (gameOver && word === answer) ? 'answer' : 'guess'; }
+
+  function toggleMark(word, role){
+    const i = flagged.findIndex(f => f.word === word);
+    if(i >= 0) flagged.splice(i, 1);
+    else flagged.push({ word, role });
+    saveFlagged();
+    refreshMarkButtons();
+    refreshResultMark();
+  }
+
+  function renderEditBar(){
+    document.body.classList.toggle('edit-mode', editMode);
+    markedCountEl.textContent = flagged.length;
+  }
+
+  function styleMarkBtn(btn, word, offText, onText){
+    const on = isMarked(word);
+    btn.textContent = on ? onText : offText;
+    btn.classList.toggle('on', on);
+  }
+
+  // One "mark" link beside each submitted guess row (visible only in edit mode)
+  function refreshMarkButtons(){
+    rowsEls.forEach((r, i) => {
+      if(i >= guessHistory.length) return;
+      const word = guessHistory[i];
+      if(!r.markBtn){
+        const btn = document.createElement('button');
+        btn.className = 'mark-btn';
+        btn.type = 'button';
+        r.row.appendChild(btn);
+        r.markBtn = btn;
+      }
+      r.markBtn.onclick = () => toggleMark(word, roleFor(word));
+      styleMarkBtn(r.markBtn, word, 'mark', 'marked');
+    });
+  }
+
+  // Link under the answer in the end-of-game popup (edit mode only)
+  function refreshResultMark(){
+    if(!editMode){
+      resultMarkBtn.style.display = 'none';
+      return;
+    }
+    resultMarkBtn.style.display = 'block';
+    styleMarkBtn(resultMarkBtn, answer, 'mark for removal', 'marked (tap to undo)');
+    resultMarkBtn.onclick = () => toggleMark(answer, 'answer');
+  }
+
+  function setEditMode(on){
+    editMode = on;
+    try{ localStorage.setItem(EDIT_KEY, on ? '1' : '0'); }catch(e){}
+    renderEditBar();
+    refreshMarkButtons();
+    setMessage(on ? 'Edit mode on' : 'Edit mode off', 1800);
+  }
+
+  // Secret trigger: tap the title 5 times (each tap within 2.5s of the last)
+  let titleTaps = 0;
+  let titleTapTimer = null;
+  document.getElementById('title').addEventListener('click', () => {
+    titleTaps++;
+    clearTimeout(titleTapTimer);
+    titleTapTimer = setTimeout(() => { titleTaps = 0; }, 2500);
+    if(titleTaps >= 5){
+      titleTaps = 0;
+      setEditMode(!editMode);
+    }
+  });
+
+  function exportText(){
+    return flagged.map(f => `${f.word},${f.word.length},${f.role}`).join('\n') + (flagged.length ? '\n' : '');
+  }
+
+  function renderReviewList(){
+    reviewListEl.innerHTML = '';
+    if(!flagged.length){
+      const empty = document.createElement('div');
+      empty.className = 'review-empty';
+      empty.textContent = 'Nothing marked yet.';
+      reviewListEl.appendChild(empty);
+      return;
+    }
+    flagged.forEach(f => {
+      const row = document.createElement('div');
+      row.className = 'review-row';
+      const w = document.createElement('span');
+      w.className = 'review-word';
+      w.textContent = f.word;
+      const r = document.createElement('span');
+      r.className = 'review-role';
+      r.textContent = f.role;
+      const x = document.createElement('button');
+      x.className = 'review-x';
+      x.type = 'button';
+      x.textContent = 'unmark';
+      x.onclick = () => { toggleMark(f.word, f.role); renderReviewList(); };
+      row.appendChild(w);
+      row.appendChild(r);
+      row.appendChild(x);
+      reviewListEl.appendChild(row);
+    });
+  }
+
+  async function copyList(){
+    const text = exportText();
+    if(!text) return;
+    let ok = false;
+    try{
+      await navigator.clipboard.writeText(text);
+      ok = true;
+    }catch(e){
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      try{ ok = document.execCommand('copy'); }catch(_){}
+      document.body.removeChild(ta);
+    }
+    copyListBtn.textContent = ok ? 'Copied ✓' : 'Copy failed';
+    setTimeout(() => { copyListBtn.textContent = 'Copy list'; }, 1500);
+  }
+
+  function downloadList(){
+    const text = exportText();
+    if(!text) return;
+    const blob = new Blob([text], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'wrdl-marked-words.txt';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  document.getElementById('reviewBtn').addEventListener('click', () => {
+    renderReviewList();
+    reviewOverlay.classList.add('show');
+  });
+  document.getElementById('reviewCloseBtn').addEventListener('click', () => {
+    reviewOverlay.classList.remove('show');
+  });
+  document.getElementById('exitEditBtn').addEventListener('click', () => setEditMode(false));
+  copyListBtn.addEventListener('click', copyList);
+  document.getElementById('downloadListBtn').addEventListener('click', downloadList);
+
+  let clearArmed = false;
+  let clearArmTimer = null;
+  clearListBtn.addEventListener('click', () => {
+    if(!clearArmed){
+      clearArmed = true;
+      clearListBtn.textContent = 'Click again to clear';
+      clearArmTimer = setTimeout(() => {
+        clearArmed = false;
+        clearListBtn.textContent = 'Clear list';
+      }, 3000);
+    } else {
+      clearTimeout(clearArmTimer);
+      clearArmed = false;
+      clearListBtn.textContent = 'Clear list';
+      flagged = [];
+      saveFlagged();
+      refreshMarkButtons();
+      refreshResultMark();
+      renderReviewList();
+    }
+  });
+
   function pickAnswer(){
     const pool = SOLUTIONS[wordLength];
+    for(let i = 0; i < 50; i++){
+      const w = pool[Math.floor(Math.random() * pool.length)];
+      if(!excludedAnswers.has(w)) return w;
+    }
     return pool[Math.floor(Math.random() * pool.length)];
   }
 
@@ -685,7 +1004,7 @@
       shakeRow();
       return;
     }
-    if(!guessSets[wordLength].has(currentGuess)){
+    if(!guessSets[wordLength].has(currentGuess) || rejectedGuesses.has(currentGuess)){
       setMessage("Not in word list", 1200);
       shakeRow();
       return;
@@ -700,6 +1019,7 @@
 
     if(guess === answer){
       gameOver = true;
+      refreshMarkButtons();
       saveGame();
       setTimeout(() => showResult(true), 1500);
       return;
@@ -710,6 +1030,7 @@
     if(currentRow >= MAX_GUESSES){
       gameOver = true;
     }
+    refreshMarkButtons();
     saveGame();
 
     if(gameOver){
@@ -770,8 +1091,10 @@
     recordGameEnd(won, currentRow + 1);
     resultTitle.textContent = won ? "Got it." : "So it goes.";
     resultBody.innerHTML = won
-      ? `Solved in ${currentRow + 1} of ${MAX_GUESSES}. Current streak: ${stats.currentStreak}.`
+      ? `Solved in ${currentRow + 1} of ${MAX_GUESSES}. Current streak: ${stats.currentStreak}.` +
+        (editMode ? ` The word was <span class="answer-word">${answer.toUpperCase()}</span>.` : '')
       : `The word was <span class="answer-word">${answer.toUpperCase()}</span>.`;
+    refreshResultMark();
     overlay.classList.add('show');
     launchConfetti(6000, won ? CONFETTI_COLORS_WIN : CONFETTI_COLORS_LOSS);
   }
@@ -823,7 +1146,7 @@
   });
 
   window.addEventListener('keydown', (e) => {
-    if(statsOverlay.classList.contains('show')) return;
+    if(statsOverlay.classList.contains('show') || reviewOverlay.classList.contains('show')) return;
     const key = e.key.toLowerCase();
     if(key === 'enter') handleKey('enter');
     else if(key === 'backspace') handleKey('back');
@@ -922,6 +1245,8 @@
   }
   buildLengthGroup();
   renderStatsQuick();
+  renderEditBar();
+  refreshMarkButtons();
   saveGame();
   requestWakeLock();
 })();
